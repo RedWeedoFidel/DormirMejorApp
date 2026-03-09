@@ -1,0 +1,5 @@
+{
+  "name": "DormirMejor",
+  "description": "Una aplicación para el seguimiento de la terapia CPAP, análisis de sueño y comunidad, con un asistente de IA llamado Simbie.",
+  "requestFramePermissions": ["microphone"]
+}
