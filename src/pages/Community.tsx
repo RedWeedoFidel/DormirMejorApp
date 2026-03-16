@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Bell, Plus, MoreHorizontal, Heart, MessageCircle, Share2, Shield, Moon, X, Send, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Bell, Plus, MoreHorizontal, Heart, MessageCircle, Share2, Shield, Moon, X, Send, Image as ImageIcon, Camera } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -27,6 +27,13 @@ export default function Community() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [newPostContent, setNewPostContent] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // Image Upload State
+    const [selectedImage, setSelectedImage] = useState<File | null>(null);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [uploadingImage, setUploadingImage] = useState(false);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const cameraInputRef = React.useRef<HTMLInputElement>(null);
 
     const fetchPosts = async () => {
         try {
@@ -35,7 +42,7 @@ export default function Community() {
                 .from('community_posts')
                 .select(`
                     *,
-                    profiles:user_id (name)
+                    profiles:public_profiles (name)
                 `)
                 .order('created_at', { ascending: false });
 
@@ -64,20 +71,114 @@ export default function Community() {
         fetchPosts();
     }, [user]);
 
+    const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        if (!file.type.startsWith('image/')) {
+            alert('Por favor selecciona una imagen válida.');
+            return;
+        }
+
+        setSelectedImage(file);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setImagePreview(reader.result as string);
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const compressImage = async (file: File): Promise<Blob> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target?.result as string;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 1024;
+                    const MAX_HEIGHT = 1024;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx?.drawImage(img, 0, 0, width, height);
+                    canvas.toBlob(
+                        (blob) => {
+                            if (blob) resolve(blob);
+                            else reject(new Error('Canvas to Blob failed'));
+                        },
+                        'image/jpeg',
+                        0.8
+                    );
+                };
+            };
+            reader.onerror = reject;
+        });
+    };
+
+    const uploadImage = async (file: File): Promise<string | null> => {
+        if (!user) return null;
+        try {
+            const compressedBlob = await compressImage(file);
+            const fileExt = 'jpg';
+            const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+            const filePath = `${fileName}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('community-posts')
+                .upload(filePath, compressedBlob, {
+                    contentType: 'image/jpeg',
+                    upsert: true
+                });
+
+            if (uploadError) throw uploadError;
+
+            const { data } = supabase.storage.from('community-posts').getPublicUrl(filePath);
+            return data.publicUrl;
+        } catch (err) {
+            console.error('Error uploading image:', err);
+            return null;
+        }
+    };
+
     const handleCreatePost = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!user || !newPostContent.trim()) return;
 
         setIsSubmitting(true);
         try {
+            let imageUrl = null;
+            if (selectedImage) {
+                imageUrl = await uploadImage(selectedImage);
+            }
+
             const { error } = await supabase.from('community_posts').insert({
                 user_id: user.id,
-                content: newPostContent
+                content: newPostContent,
+                image_url: imageUrl
             });
 
             if (error) throw error;
 
             setNewPostContent('');
+            setSelectedImage(null);
+            setImagePreview(null);
             setShowCreateModal(false);
             fetchPosts();
         } catch (err) {
@@ -255,27 +356,66 @@ export default function Community() {
                                     autoFocus
                                 />
                             </div>
-                            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
-                                <div className="flex gap-2">
-                                    <button type="button" className="p-2 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-xl transition-colors">
-                                        <ImageIcon className="w-6 h-6" />
-                                    </button>
-                                    <button type="button" className="p-2 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-xl transition-colors">
-                                        <Shield className="w-6 h-6" />
+                            <div className="flex flex-col gap-4">
+                                {imagePreview && (
+                                    <div className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 aspect-video bg-slate-100 dark:bg-slate-900">
+                                        <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                                        <button 
+                                            type="button"
+                                            onClick={() => { setSelectedImage(null); setImagePreview(null); }}
+                                            className="absolute top-2 right-2 p-1.5 bg-slate-900/60 text-white rounded-full hover:bg-slate-900/80 transition-all backdrop-blur-sm"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
+                                    <div className="flex gap-2">
+                                        <button 
+                                            type="button" 
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="p-2.5 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-xl transition-colors"
+                                        >
+                                            <ImageIcon className="w-6 h-6" />
+                                        </button>
+                                        <button 
+                                            type="button" 
+                                            onClick={() => cameraInputRef.current?.click()}
+                                            className="p-2.5 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-xl transition-colors"
+                                        >
+                                            <Camera className="w-6 h-6" />
+                                        </button>
+                                        
+                                        {/* Hidden Inputs */}
+                                        <input 
+                                            ref={fileInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={handleFileSelected}
+                                        />
+                                        <input 
+                                            ref={cameraInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            capture="environment"
+                                            className="hidden"
+                                            onChange={handleFileSelected}
+                                        />
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        disabled={isSubmitting || (!newPostContent.trim() && !selectedImage)}
+                                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2.5 px-6 rounded-2xl flex items-center gap-2 transition-all active:scale-95 shadow-md shadow-purple-500/20"
+                                    >
+                                        {isSubmitting ? 'Publicando...' : (
+                                            <>
+                                                Publicar
+                                                <Send className="w-4 h-4" />
+                                            </>
+                                        )}
                                     </button>
                                 </div>
-                                <button
-                                    type="submit"
-                                    disabled={isSubmitting || !newPostContent.trim()}
-                                    className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2.5 px-6 rounded-2xl flex items-center gap-2 transition-all active:scale-95"
-                                >
-                                    {isSubmitting ? 'Publicando...' : (
-                                        <>
-                                            Publicar
-                                            <Send className="w-4 h-4" />
-                                        </>
-                                    )}
-                                </button>
                             </div>
                         </form>
                     </div>
