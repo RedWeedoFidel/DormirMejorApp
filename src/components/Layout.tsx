@@ -3,9 +3,11 @@ import { Outlet, NavLink, useLocation, Navigate } from 'react-router-dom';
 import { Home, Activity, Users, Bot, User, Map } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAppContext } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Layout() {
-  const { mode } = useAppContext();
+  const { mode, hasUnreadNotifications } = useAppContext();
+  const { inTreatment } = useAuth();
   const location = useLocation();
 
   // Protect restricted routes in child mode
@@ -22,9 +24,16 @@ export default function Layout() {
       <nav className="fixed bottom-0 w-full max-w-md bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 pb-6 pt-2 z-50">
         <div className="flex justify-between items-end">
           <NavItem to="/home" icon={<Home className="w-6 h-6" />} label="Inicio" />
-          {mode === 'adult' && <NavItem to="/guide" icon={<Map className="w-6 h-6" />} label="Guía" />}
+          {mode === 'adult' && !inTreatment && <NavItem to="/guide" icon={<Map className="w-6 h-6" />} label="Guía" />}
           <NavItem to="/therapy" icon={<Activity className="w-6 h-6" />} label="Terapia" />
-          {mode === 'adult' && <NavItem to="/community" icon={<Users className="w-6 h-6" />} label="Comunidad" />}
+          {mode === 'adult' && (
+            <NavItem 
+              to="/community" 
+              icon={<Users className="w-6 h-6" />} 
+              label="Comunidad" 
+              showDot={hasUnreadNotifications} 
+            />
+          )}
           {mode === 'adult' && <NavItem to="/simbie" icon={<Bot className="w-6 h-6" />} label="Simbie AI" />}
           <NavItem to="/profile" icon={<User className="w-6 h-6" />} label="Perfil" />
         </div>
@@ -33,7 +42,7 @@ export default function Layout() {
   );
 }
 
-function NavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
+function NavItem({ to, icon, label, showDot }: { to: string; icon: React.ReactNode; label: string; showDot?: boolean }) {
   return (
     <NavLink
       to={to}
@@ -48,6 +57,9 @@ function NavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label
         <>
           <div className={cn('relative p-1 rounded-xl transition-all duration-300', isActive && 'bg-blue-100 dark:bg-blue-900/30')}>
             {icon}
+            {showDot && (
+              <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white dark:border-slate-900 animate-pulse" />
+            )}
           </div>
           <span className="text-[10px] font-medium">{label}</span>
         </>

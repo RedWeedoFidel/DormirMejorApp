@@ -5,8 +5,10 @@ type AppMode = 'adult' | 'child';
 interface AppContextType {
   mode: AppMode;
   pin: string | null;
+  hasUnreadNotifications: boolean;
   setMode: (mode: AppMode) => void;
   setPin: (pin: string | null) => void;
+  setHasUnreadNotifications: (val: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -14,11 +16,12 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [mode, setMode] = useState<AppMode>('adult');
   const [pin, setPin] = useState<string | null>(null);
+  const [hasUnreadNotifications, setHasUnreadNotifications] = useState<boolean>(true); // Default to true for demo purposes
 
   // Optional: persist to localStorage if needed, but for MVP memory is fine.
   
   return (
-    <AppContext.Provider value={{ mode, pin, setMode, setPin }}>
+    <AppContext.Provider value={{ mode, pin, hasUnreadNotifications, setMode, setPin, setHasUnreadNotifications }}>
       {children}
     </AppContext.Provider>
   );

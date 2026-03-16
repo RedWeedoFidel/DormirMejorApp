@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Bell, Plus, MoreHorizontal, Heart, MessageCircle, Share2, Shield, Moon, X, Send, Image as ImageIcon, Camera } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useAppContext } from '../contexts/AppContext';
 import { cn } from '../lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -22,6 +23,7 @@ interface Post {
 
 export default function Community() {
     const { user } = useAuth();
+    const { hasUnreadNotifications, setHasUnreadNotifications } = useAppContext();
     const [posts, setPosts] = useState<Post[]>([]);
     const [loading, setLoading] = useState(true);
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -69,6 +71,8 @@ export default function Community() {
 
     useEffect(() => {
         fetchPosts();
+        // Clear notifications when visiting
+        setHasUnreadNotifications(false);
     }, [user]);
 
     const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -214,7 +218,9 @@ export default function Community() {
                     <h1 className="text-lg font-bold text-slate-900 dark:text-white">Normalización y Comunidad</h1>
                     <button className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors relative">
                         <Bell className="w-6 h-6" />
-                        <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900"></span>
+                        {hasUnreadNotifications && (
+                            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
+                        )}
                     </button>
                 </div>
             </header>
