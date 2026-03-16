@@ -1,14 +1,119 @@
+import React, { useState, useEffect } from 'react';
 import { Bell, Moon, CloudOff, Zap, Droplet, Wind, Rocket, Star, Award } from 'lucide-react';
 import { useAppContext } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 export default function Home() {
   const { mode } = useAppContext();
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<any>(null);
+  const [stats, setStats] = useState<any>(null);
+  const [lastSleep, setLastSleep] = useState<any>(null);
+  const [weeklySleep, setWeeklySleep] = useState<any[]>([]);
+  const [showSleepModal, setShowSleepModal] = useState(false);
+  const [sleepHours, setSleepHours] = useState(8);
+  const [sleepQuality, setSleepQuality] = useState(80);
+  const [maskLeaks, setMaskLeaks] = useState(false);
+  const [savingSleep, setSavingSleep] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      const fetchData = async () => {
+        try {
+          // Fetch or create profile
+          let { data: profileData, error: pError } = await supabase.from('user_profiles').select('*').eq('id', user.id).maybeSingle();
+          if (!profileData && !pError) {
+            const { data: newProfile } = await supabase.from('user_profiles').insert([{ id: user.id, name: user.email?.split('@')[0] }]).select().single();
+            profileData = newProfile;
+          }
+
+          // Fetch or create stats
+          let { data: statsData, error: sError } = await supabase.from('user_stats').select('*').eq('user_id', user.id).maybeSingle();
+          if (!statsData && !sError) {
+            const { data: newStats } = await supabase.from('user_stats').insert([{ user_id: user.id }]).select().single();
+            statsData = newStats;
+          }
+
+          // Fetch last sleep
+          const { data: sleepData } = await supabase.from('sleep_records')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          // Fetch last 7 days for trends
+          const { data: weeklyData } = await supabase.from('sleep_records')
+            .select('date, sleep_quality')
+            .eq('user_id', user.id)
+            .order('date', { ascending: false })
+            .limit(7);
+
+          if (profileData) setProfile(profileData);
+          if (statsData) setStats(statsData);
+          if (sleepData) setLastSleep(sleepData);
+          if (weeklyData) setWeeklySleep(weeklyData.reverse());
+        } catch (err) {
+          console.error("Error fetching/creating initial data:", err);
+        }
+      };
+      fetchData();
+    }
+  }, [user]);
+
+  const handleSaveSleep = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    setSavingSleep(true);
+    try {
+      // 1. Save Sleep Record
+      const { error } = await supabase.from('sleep_records').upsert({
+        user_id: user.id,
+        date: new Date().toISOString().split('T')[0],
+        source: 'manual',
+        sleep_hours: sleepHours,
+        sleep_quality: sleepQuality,
+        mask_leaks: maskLeaks
+      }, { onConflict: 'user_id,date' });
+
+      if (error) throw error;
+
+      // 2. Update stats
+      if (stats) {
+        const newStats = {
+          streak_days: stats.streak_days + 1,
+          total_days: stats.total_days + 1,
+          total_hours: stats.total_hours + sleepHours,
+          perfect_days: (!maskLeaks && sleepQuality >= 80) ? stats.perfect_days + 1 : stats.perfect_days
+        };
+        await supabase.from('user_stats').update(newStats).eq('user_id', user.id);
+        setStats({ ...stats, ...newStats });
+      }
+
+
+      // 3. Update local lastSleep
+      setLastSleep({
+        sleep_hours: sleepHours,
+        sleep_quality: sleepQuality,
+        mask_leaks: maskLeaks
+      });
+
+      setShowSleepModal(false);
+    } catch (err: any) {
+      console.error("Error saving sleep:", err);
+      alert("Hubo un error al guardar el registro: " + (err.message || JSON.stringify(err)));
+    } finally {
+      setSavingSleep(false);
+    }
+  };
 
   if (mode === 'child') {
     return (
       <div className="flex flex-col min-h-screen bg-slate-900 text-slate-100 font-sans pb-24 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900 to-slate-800 pointer-events-none"></div>
-        
+
         <header className="flex items-center justify-between p-4 pb-2 sticky top-0 z-10 bg-slate-900/95 backdrop-blur-md">
           <div className="flex items-center gap-3">
             <div className="relative">
@@ -22,12 +127,12 @@ export default function Home() {
             </div>
             <div>
               <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Centro de Comando</p>
-              <h2 className="text-lg font-bold text-white">Capitán Alex</h2>
+              <h2 className="text-lg font-bold text-white">¡Hola, {profile?.name || 'Capitán'}!</h2>
             </div>
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700">
             <Zap className="text-yellow-400 w-4 h-4" />
-            <span className="text-sm font-bold text-white">5 Días</span>
+            <span className="text-sm font-bold text-white">{stats?.streak_days || 0} Días</span>
           </div>
         </header>
 
@@ -65,7 +170,7 @@ export default function Home() {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white">Energía de Nave</h3>
-                <p className="text-lg font-bold text-blue-400 mt-1">8.5h</p>
+                <p className="text-lg font-bold text-blue-400 mt-1">{lastSleep ? lastSleep.sleep_hours : '0'}h</p>
               </div>
             </div>
             <div className="bg-slate-800 border border-slate-700/50 rounded-xl p-4 flex flex-col items-center text-center gap-3">
@@ -79,11 +184,14 @@ export default function Home() {
             </div>
           </div>
 
-          <button className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white rounded-xl shadow-lg shadow-blue-900/30 flex items-center justify-center gap-3 transform transition-all active:scale-[0.98] group mb-6">
+          <button
+            onClick={() => setShowSleepModal(true)}
+            className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white rounded-xl shadow-lg shadow-blue-900/30 flex items-center justify-center gap-3 transform transition-all active:scale-[0.98] group mb-6"
+          >
             <Rocket className="w-6 h-6 group-hover:rotate-12 transition-transform" />
             <div className="text-left">
-              <span className="block text-lg font-bold leading-tight">Empezar Misión Nocturna</span>
-              <span className="block text-xs text-blue-100 opacity-90">Conecta tu máscara y despega</span>
+              <span className="block text-lg font-bold leading-tight">Registrar Misión Nocturna</span>
+              <span className="block text-xs text-blue-100 opacity-90">¿Cómo ha ido el viaje?</span>
             </div>
           </button>
         </main>
@@ -107,7 +215,7 @@ export default function Home() {
           </div>
           <div>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Buenos Días,</p>
-            <h2 className="text-lg font-bold leading-tight tracking-tight">Alex</h2>
+            <h2 className="text-lg font-bold leading-tight tracking-tight">{profile?.name?.split(' ')[0] || 'Usuario'}</h2>
           </div>
         </div>
         <button className="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors">
@@ -145,7 +253,7 @@ export default function Home() {
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
               <Moon className="text-blue-500 mb-1 w-8 h-8" />
               <h1 className="text-4xl font-bold tracking-tighter">
-                4.5<span className="text-lg font-normal text-slate-400">h</span>
+                {lastSleep ? lastSleep.sleep_hours : '0.0'}<span className="text-lg font-normal text-slate-400">h</span>
               </h1>
               <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1">Dosis de Sueño</p>
               <div className="mt-2 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full text-xs font-semibold text-blue-600 dark:text-blue-400">
@@ -186,18 +294,18 @@ export default function Home() {
               <div className="p-2 bg-teal-100 dark:bg-teal-500/20 rounded-lg text-teal-600 dark:text-teal-400">
                 <Zap className="w-5 h-5" />
               </div>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Vitalidad</span>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Calidad Guardada</span>
             </div>
             <div className="mt-2">
               <p className="text-2xl font-bold text-slate-900 dark:text-white">
-                85<span className="text-sm font-normal text-slate-500">/100</span>
+                {lastSleep ? lastSleep.sleep_quality : '0'}<span className="text-sm font-normal text-slate-500">/100</span>
               </p>
               <div className="flex items-center gap-1 mt-1 text-emerald-500 text-xs font-medium">
-                <span>↗ +5% esta semana</span>
+                <span>último registro</span>
               </div>
             </div>
             <div className="h-1 w-full bg-slate-100 dark:bg-slate-700 mt-4 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 w-[85%] rounded-full"></div>
+              <div className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 rounded-full" style={{ width: `${lastSleep?.sleep_quality || 0}%` }}></div>
             </div>
           </div>
         </section>
@@ -211,40 +319,51 @@ export default function Home() {
           </div>
           <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-sm">
             <div className="flex items-end justify-between h-32 gap-2">
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-t-sm h-[40%] group-hover:bg-blue-500/50 transition-colors relative"></div>
-                <span className="text-xs text-slate-500">L</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-t-sm h-[55%] group-hover:bg-blue-500/50 transition-colors relative"></div>
-                <span className="text-xs text-slate-500">M</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-t-sm h-[45%] group-hover:bg-blue-500/50 transition-colors relative"></div>
-                <span className="text-xs text-slate-500">X</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-t-sm h-[70%] group-hover:bg-blue-500/50 transition-colors relative"></div>
-                <span className="text-xs text-slate-500">J</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-blue-500 rounded-t-sm h-[85%] shadow-[0_0_15px_rgba(59,130,246,0.3)] relative">
-                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-white text-white dark:text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                    85 Puntaje
+              {[...Array(7)].map((_, i) => {
+                const date = new Date();
+                date.setDate(date.getDate() - (6 - i));
+                const dateStr = date.toISOString().split('T')[0];
+                const dayData = weeklySleep.find((s: any) => s.date === dateStr);
+                const quality = dayData ? dayData.sleep_quality : 0;
+                const dayInitial = ['D', 'L', 'M', 'X', 'J', 'V', 'S'][date.getDay()];
+                const isToday = i === 6;
+
+                return (
+                  <div key={i} className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
+                    <div
+                      className={`w-full rounded-t-sm transition-all relative ${quality > 0
+                          ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)]'
+                          : 'bg-slate-200 dark:bg-slate-700'
+                        }`}
+                      style={{ height: `${quality > 0 ? quality : 5}%` }}
+                    >
+                      {quality > 0 && (
+                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-white text-white dark:text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20">
+                          {quality} Puntaje
+                        </div>
+                      )}
+                    </div>
+                    <span className={`text-xs font-medium ${isToday ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-slate-500'}`}>
+                      {dayInitial}
+                    </span>
                   </div>
-                </div>
-                <span className="text-xs text-slate-900 dark:text-white font-medium">V</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-t-sm h-[60%] group-hover:bg-blue-500/50 transition-colors relative"></div>
-                <span className="text-xs text-slate-500">S</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-t-sm h-[50%] group-hover:bg-blue-500/50 transition-colors relative"></div>
-                <span className="text-xs text-slate-500">D</span>
-              </div>
+                );
+              })}
             </div>
           </div>
+        </section>
+
+        <section className="mt-8 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Registro Diario</h3>
+          </div>
+          <button
+            onClick={() => setShowSleepModal(true)}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/20 flex justify-center items-center gap-2 transition-colors"
+          >
+            <Moon className="w-5 h-5" />
+            Registrar Noche Manualmente
+          </button>
         </section>
 
         <section className="mt-8 mb-6">
@@ -283,6 +402,76 @@ export default function Home() {
           </div>
         </section>
       </main>
-    </div>
+
+      {/* Sleep Entry Modal */}
+      {
+        showSleepModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm px-4">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-slate-200 dark:border-slate-700 relative">
+              <button
+                onClick={() => setShowSleepModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <Moon className="w-6 h-6" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">Registrar Sueño</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  ¿Cómo has dormido esta noche?
+                </p>
+              </div>
+
+              <form onSubmit={handleSaveSleep} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Horas de sueño</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="24"
+                    value={sleepHours}
+                    onChange={(e) => setSleepHours(Number(e.target.value))}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Calidad de sueño (0-100)</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={sleepQuality}
+                    onChange={(e) => setSleepQuality(Number(e.target.value))}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700"
+                  />
+                  <div className="text-right text-sm font-bold text-blue-500 mt-1">{sleepQuality}%</div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 border border-slate-200 dark:border-slate-700 rounded-xl">
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">¿Tuviste fugas de máscara?</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={maskLeaks} onChange={(e) => setMaskLeaks(e.target.checked)} />
+                    <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={savingSleep}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors disabled:opacity-50 mt-4"
+                >
+                  {savingSleep ? 'Guardando...' : 'Guardar Registro'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )
+      }
+    </div >
   );
 }

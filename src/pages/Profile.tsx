@@ -2,11 +2,53 @@ import React, { useState, useEffect } from 'react';
 import { Star, Zap, Settings, Edit2, Rocket, Award, Lock, User, Shield, Activity, Globe, Bell, Moon, Filter, Clock, ShoppingCart, Fingerprint, Gavel, LogOut, ChevronRight, ExternalLink, X, Compass, Anchor, BatteryFull, Flame, Sparkles, Target, Heart, Cloud, Crosshair, Droplets, Wind, Snowflake, Sun, Medal, Crown, Flag, Trophy, Navigation } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAppContext } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
+import { connectGoogleFit, syncSleepData } from '../lib/googleFit';
 
 export default function Profile() {
   const { mode, pin, setMode, setPin } = useAppContext();
+  const { user, signOut } = useAuth();
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(true);
+
+  const [profile, setProfile] = useState<any>(null);
+  const [stats, setStats] = useState<any>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [fitConnected, setFitConnected] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      const fetchData = async () => {
+        try {
+          // Fetch or create profile
+          let { data: profileData } = await supabase.from('user_profiles').select('*').eq('id', user.id).maybeSingle();
+          if (!profileData) {
+            const { data: newProfile } = await supabase.from('user_profiles').insert([{ id: user.id, name: user.email?.split('@')[0] }]).select().single();
+            profileData = newProfile;
+          }
+
+          // Fetch or create stats
+          let { data: statsData } = await supabase.from('user_stats').select('*').eq('user_id', user.id).maybeSingle();
+          if (!statsData) {
+            const { data: newStats } = await supabase.from('user_stats').insert([{ user_id: user.id }]).select().single();
+            statsData = newStats;
+          }
+
+          if (profileData) setProfile(profileData);
+          if (statsData) {
+            setStats(statsData);
+            if (statsData.days_without_cleaning !== undefined) {
+              setDaysWithoutCleaning(statsData.days_without_cleaning);
+            }
+          }
+        } catch (err) {
+          console.error("Error in Profile fetchData:", err);
+        }
+      };
+      fetchData();
+    }
+  }, [user]);
 
   // Modal states
   const [pinModalState, setPinModalState] = useState<'none' | 'create' | 'enter'>('none');
@@ -17,14 +59,58 @@ export default function Profile() {
 
   useEffect(() => {
     if (mode === 'adult' && daysWithoutCleaning >= 5) {
-      setToast({ 
-        text: `¡Aviso! Llevas ${daysWithoutCleaning} días sin limpiar la máscara. Por favor, límpiala pronto.`, 
-        type: 'warning' 
+      setToast({
+        text: `¡Aviso! Llevas ${daysWithoutCleaning} días sin limpiar la máscara. Por favor, límpiala pronto.`,
+        type: 'warning'
       });
       const timer = setTimeout(() => setToast(null), 5000);
       return () => clearTimeout(timer);
     }
   }, [mode, daysWithoutCleaning]);
+
+  const handleCleaning = async () => {
+    setDaysWithoutCleaning(0);
+    if (user) {
+      await supabase.from('user_stats').update({ days_without_cleaning: 0 }).eq('user_id', user.id);
+    }
+    setToast({ text: '¡Máscara limpia registrada!', type: 'success' });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleGoogleFitSync = async () => {
+    if (!user) return;
+    setIsSyncing(true);
+    try {
+      if (!fitConnected) {
+        await connectGoogleFit(user.id);
+        setFitConnected(true);
+      }
+
+      const newSleepData = await syncSleepData(user.id);
+
+      // Update local stats if we got a new sleep record
+      if (stats && newSleepData) {
+        const newStats = {
+          streak_days: stats.streak_days + 1,
+          total_days: stats.total_days + 1,
+          total_hours: stats.total_hours + newSleepData.sleep_hours,
+          perfect_days: (!newSleepData.mask_leaks && newSleepData.sleep_quality >= 80)
+            ? stats.perfect_days + 1
+            : stats.perfect_days
+        };
+        await supabase.from('user_stats').update(newStats).eq('user_id', user.id);
+        setStats({ ...stats, ...newStats });
+      }
+
+      setToast({ text: '¡Datos de sueño sincronizados con éxito!', type: 'success' });
+    } catch (error) {
+      console.error("Sync error:", error);
+      setToast({ text: 'Error al sincronizar con Google Fit.', type: 'warning' });
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
 
   const handleModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedMode = e.target.value as 'adult' | 'child';
@@ -76,13 +162,13 @@ export default function Profile() {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm px-4">
         <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-slate-200 dark:border-slate-700 relative">
-          <button 
+          <button
             onClick={() => { setPinModalState('none'); setPinInput(''); setPinError(false); }}
             className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
           >
             <X className="w-5 h-5" />
           </button>
-          
+
           <div className="text-center mb-6">
             <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-3">
               <Lock className="w-6 h-6" />
@@ -91,8 +177,8 @@ export default function Profile() {
               {pinModalState === 'create' ? 'Crear PIN Parental' : 'Introduce tu PIN'}
             </h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              {pinModalState === 'create' 
-                ? 'Crea un PIN de 4 dígitos para proteger el modo adulto.' 
+              {pinModalState === 'create'
+                ? 'Crea un PIN de 4 dígitos para proteger el modo adulto.'
                 : 'Introduce tu PIN de 4 dígitos para volver al modo adulto.'}
             </p>
           </div>
@@ -155,7 +241,7 @@ export default function Profile() {
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900 to-slate-800 pointer-events-none"></div>
-        
+
         <header className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-slate-800 border border-slate-700 text-yellow-400">
@@ -169,9 +255,9 @@ export default function Profile() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700">
               <Zap className="text-yellow-400 w-4 h-4" />
-              <span className="text-sm font-bold text-white">5 Días</span>
+              <span className="text-sm font-bold text-white">{stats?.streak_days || 0} Días</span>
             </div>
-            <button 
+            <button
               onClick={handleChildSettingsClick}
               className="relative w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700 text-blue-500 hover:bg-slate-700 transition-colors"
               title="Ajustes (Requiere PIN)"
@@ -193,7 +279,7 @@ export default function Profile() {
               </button>
             </div>
             <div className="text-center space-y-1">
-              <h1 className="text-2xl font-bold text-white tracking-tight">¡Hola, Capitán Alex!</h1>
+              <h1 className="text-2xl font-bold text-white tracking-tight">¡Hola, {profile?.name || 'Capitán'}!</h1>
               <p className="text-slate-400 text-sm">Tu máscara te da superpoderes para soñar</p>
             </div>
           </section>
@@ -279,8 +365,8 @@ export default function Profile() {
         {/* User Info Section */}
         <div className="flex flex-col items-center p-6 gap-4">
           <div className="relative">
-            <div 
-              className="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-24 w-24 border-4 border-blue-600/20" 
+            <div
+              className="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-24 w-24 border-4 border-blue-600/20"
               style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop")' }}
             ></div>
             <div className="absolute bottom-0 right-0 bg-blue-600 text-white p-1.5 rounded-full border-2 border-slate-50 dark:border-slate-900 shadow-sm flex items-center justify-center">
@@ -288,7 +374,7 @@ export default function Profile() {
             </div>
           </div>
           <div className="flex flex-col items-center justify-center">
-            <p className="text-[22px] font-bold leading-tight text-center">Carlos Mendoza</p>
+            <p className="text-[22px] font-bold leading-tight text-center">{profile?.name || 'Usuario'}</p>
             <div className="flex items-center gap-1.5 mt-1 bg-blue-600/10 px-3 py-1 rounded-full text-blue-600 dark:text-blue-400">
               <Award className="w-4 h-4" />
               <p className="text-sm font-medium">Usuario Experto</p>
@@ -304,13 +390,29 @@ export default function Profile() {
           </h3>
           <div className="p-4 flex flex-col gap-3">
             <div className="flex justify-between items-center">
-              <p className="text-slate-500 dark:text-slate-400 text-sm">Presión prescrita</p>
-              <p className="text-sm font-medium">10 cmH2O</p>
+              <p className="text-slate-500 dark:text-slate-400 text-sm">Tratamiento activo</p>
+              <p className="text-sm font-medium">{profile?.in_treatment ? 'Sí' : 'No'}</p>
             </div>
-            <div className="flex justify-between items-center">
-              <p className="text-slate-500 dark:text-slate-400 text-sm">Tipo de máscara</p>
-              <p className="text-sm font-medium">Nasal (AirFit N20)</p>
-            </div>
+            {profile?.in_treatment && (
+              <>
+                <div className="flex justify-between items-center">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">Modelo de máquina</p>
+                  <p className="text-sm font-medium">{profile?.machine_model || 'No indicado'}</p>
+                </div>
+                <div className="flex justify-between items-center">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">Tipo de máscara</p>
+                  <p className="text-sm font-medium">{profile?.mask_model || 'No indicado'}</p>
+                </div>
+                <div className="flex justify-between items-center">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">Presión prescrita</p>
+                  <p className="text-sm font-medium">{profile?.prescribed_pressure ? `${profile.prescribed_pressure} cmH2O` : 'No indicado'}</p>
+                </div>
+                <div className="flex justify-between items-center">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">Severidad apnea</p>
+                  <p className="text-sm font-medium">{profile?.apnea_severity || 'No indicado'}</p>
+                </div>
+              </>
+            )}
             <div className="flex justify-between items-center">
               <p className="text-slate-500 dark:text-slate-400 text-sm">Última polisomnografía</p>
               <p className="text-sm font-medium">12/05/2023</p>
@@ -330,8 +432,8 @@ export default function Profile() {
                 <User className="w-5 h-5 text-slate-500 dark:text-slate-400" />
                 <span className="text-sm font-medium">Modo de Perfil</span>
               </div>
-              <select 
-                value={mode} 
+              <select
+                value={mode}
                 onChange={handleModeChange}
                 className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2"
               >
@@ -369,6 +471,42 @@ export default function Profile() {
                 <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
               </label>
             </div>
+          </div>
+        </div>
+
+        {/* Connected Devices */}
+        <div className="mt-4 mx-4 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <h3 className="text-lg font-bold px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            Dispositivos Conectados
+          </h3>
+          <div className="p-4 flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center p-2">
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full"><path d="M11.644 19.98c-3.14-.15-5.694-2.73-5.836-5.877-.168-3.703 2.808-6.756 6.471-6.756 1.637 0 3.125.626 4.256 1.644l-1.898 1.84c-.604-.555-1.425-.898-2.333-.898-1.845 0-3.344 1.499-3.344 3.344s1.499 3.344 3.344 3.344c1.558 0 2.86-.968 3.238-2.308h-3.238v-2.673h5.992c.07.367.108.748.108 1.144 0 3.348-2.259 5.892-5.753 6.136" fill="#4285F4"></path></svg>
+                </div>
+                <div>
+                  <span className="text-sm font-medium block">Google Fit</span>
+                  <span className="text-xs text-slate-500">Sincroniza tu sueño y actividad</span>
+                </div>
+              </div>
+              <button
+                onClick={handleGoogleFitSync}
+                className={cn(
+                  "px-4 py-2 rounded-full text-xs font-bold transition-colors",
+                  isSyncing ? "bg-slate-200 text-slate-500" : "bg-blue-100 text-blue-600 hover:bg-blue-200"
+                )}
+                disabled={isSyncing}
+              >
+                {isSyncing ? 'Sincronizando...' : 'Sincronizar Hoy'}
+              </button>
+            </div>
+            {fitConnected && (
+              <p className="text-xs text-emerald-500 text-center bg-emerald-50 dark:bg-emerald-500/10 py-2 rounded-lg mt-2">
+                Última sincronización correcta.
+              </p>
+            )}
           </div>
         </div>
 
@@ -413,8 +551,8 @@ export default function Profile() {
                   Hace {daysWithoutCleaning} {daysWithoutCleaning === 1 ? 'día' : 'días'}
                 </span>
               </div>
-              <button 
-                onClick={() => setDaysWithoutCleaning(0)}
+              <button
+                onClick={handleCleaning}
                 className="w-full mt-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-medium py-2 rounded-lg flex justify-center items-center gap-2 transition-colors text-sm"
               >
                 <Sparkles className="w-4 h-4" />
@@ -452,7 +590,7 @@ export default function Profile() {
           </div>
         </div>
 
-        <button className="mx-4 mb-8 w-[calc(100%-2rem)] flex justify-center items-center gap-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 py-3 rounded-lg transition-colors font-medium">
+        <button onClick={signOut} className="mx-4 mb-8 w-[calc(100%-2rem)] flex justify-center items-center gap-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 py-3 rounded-lg transition-colors font-medium">
           <LogOut className="w-5 h-5" />
           Cerrar Sesión
         </button>

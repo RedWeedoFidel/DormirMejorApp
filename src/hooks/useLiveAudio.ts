@@ -65,10 +65,12 @@ export function useLiveAudio() {
     setIsConnecting(false);
   }, [stopAudio]);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (customSystemInstruction?: string) => {
     setIsConnecting(true);
     setError(null);
     setTranscript([]);
+
+    const defaultSystemInstruction = 'Eres Simbie, un asistente experto en sueño, apnea del sueño y terapia CPAP. Todas tus respuestas deben estar enfocadas estrictamente en este contexto. Si el usuario menciona "máquina", asume que se refiere a una máquina CPAP o BiPAP, nunca a una máquina de café u otro electrodoméstico. Usa siempre el sistema métrico (litros, mililitros, centímetros, etc.) para medidas. Eres amable, empático y experto en trastornos del sueño. Responde de forma concisa y conversacional en español.';
 
     try {
       const audioContext = new AudioContext({ sampleRate: 16000 });
@@ -91,7 +93,7 @@ export function useLiveAudio() {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },
-          systemInstruction: 'Eres Simbie, un asistente experto en sueño, apnea del sueño y terapia CPAP. Todas tus respuestas deben estar enfocadas estrictamente en este contexto. Si el usuario menciona "máquina", asume que se refiere a una máquina CPAP o BiPAP, nunca a una máquina de café u otro electrodoméstico. Usa siempre el sistema métrico (litros, mililitros, centímetros, etc.) para medidas. Eres amable, empático y experto en trastornos del sueño. Responde de forma concisa y conversacional en español.',
+          systemInstruction: customSystemInstruction || defaultSystemInstruction,
           outputAudioTranscription: {},
           inputAudioTranscription: {},
         },

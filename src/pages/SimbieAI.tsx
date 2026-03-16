@@ -1,8 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Image as ImageIcon, Video, Mic, Bot, Loader2, Paperclip, ArrowLeft, Settings, SlidersHorizontal, Wind, ShoppingCart, Brain, MicOff } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import { cn } from '../lib/utils';
 import { useLiveAudio } from '../hooks/useLiveAudio';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 // Initialize Gemini API
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -16,9 +18,12 @@ type Message = {
 };
 
 export default function SimbieAI() {
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
+  const [lastSleep, setLastSleep] = useState<any>(null);
   const [selectedFile, setSelectedFile] = useState<{ file: File; dataUrl: string; type: 'image' | 'video' } | null>(
     null
   );
@@ -28,6 +33,36 @@ export default function SimbieAI() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (user) {
+      const fetchData = async () => {
+        const { data: p } = await supabase.from('user_profiles').select('*').eq('id', user.id).maybeSingle();
+        const { data: s } = await supabase.from('sleep_records').select('*').eq('user_id', user.id).order('date', { ascending: false }).limit(1).maybeSingle();
+        setProfile(p);
+        setLastSleep(s);
+      };
+      fetchData();
+    }
+  }, [user]);
+
+  const systemInstruction = useMemo(() => {
+    let base = 'Eres Simbie, un asistente experto en sueño, apnea del sueño y terapia CPAP. Todas tus respuestas deben estar enfocadas en este contexto. Si el usuario menciona "máquina", asume que se refiere a una máquina CPAP o BiPAP, nunca a una máquina de café u otro electrodoméstico. Usa siempre el sistema métrico (litros, mililitros, centímetros, etc.) para medidas. Sé empático y profesional.';
+    
+    if (profile) {
+      base += `\n\nDATOS DEL USUARIO:\n- Nombre: ${profile.name || 'Usuario'}\n- En tratamiento: ${profile.in_treatment ? 'Sí' : 'No'}`;
+      if (profile.machine_model) base += `\n- Máquina: ${profile.machine_model}`;
+      if (profile.mask_model) base += `\n- Máscara: ${profile.mask_model}`;
+      if (profile.prescribed_pressure) base += `\n- Presión prescrita: ${profile.prescribed_pressure} cmH2O`;
+      if (profile.apnea_severity) base += `\n- Gravedad de apnea: ${profile.apnea_severity}`;
+    }
+
+    if (lastSleep) {
+      base += `\n\nÚLTIMA NOCHE (${lastSleep.date}):\n- Horas dormidas: ${lastSleep.sleep_hours}h\n- Calidad: ${lastSleep.sleep_quality}%\n- Fugas de máscara: ${lastSleep.mask_leaks ? 'Sí' : 'No'}`;
+    }
+
+    return base;
+  }, [profile, lastSleep]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -41,7 +76,7 @@ export default function SimbieAI() {
     if (isListening) {
       disconnect();
     } else {
-      connect();
+      connect(systemInstruction);
     }
   };
 
@@ -105,7 +140,7 @@ export default function SimbieAI() {
           model: 'gemini-3.1-pro-preview',
           contents: { parts },
           config: {
-            systemInstruction: 'Eres Simbie, un asistente experto en sueño, apnea del sueño y terapia CPAP. Todas tus respuestas deben estar enfocadas en este contexto. Si el usuario menciona "máquina", asume que se refiere a una máquina CPAP o BiPAP, nunca a una máquina de café u otro electrodoméstico. Usa siempre el sistema métrico (litros, mililitros, centímetros, etc.) para medidas. Sé empático y profesional.',
+            systemInstruction: systemInstruction,
           }
         });
         
@@ -115,7 +150,7 @@ export default function SimbieAI() {
           model: 'gemini-3.1-pro-preview',
           contents: textToSend,
           config: {
-            systemInstruction: 'Eres Simbie, un asistente experto en sueño, apnea del sueño y terapia CPAP. Todas tus respuestas deben estar enfocadas en este contexto. Si el usuario menciona "máquina", asume que se refiere a una máquina CPAP o BiPAP, nunca a una máquina de café u otro electrodoméstico. Usa siempre el sistema métrico (litros, mililitros, centímetros, etc.) para medidas. Sé empático y profesional.',
+            systemInstruction: systemInstruction,
           }
         });
         responseText = response.text || 'No pude generar una respuesta.';
@@ -203,13 +238,13 @@ export default function SimbieAI() {
           </div>
 
           <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6 mt-12">
-            <button onClick={() => handleQuickAction("Quiero ajustar la presión de mi máquina")} className="group flex items-center gap-3 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-blue-500 transition-all shadow-sm">
+            <button onClick={() => handleQuickAction(`Hola Simbie, soy ${profile?.name?.split(' ')[0] || 'yo'}. ¿Me ayudas con mi máquina ${profile?.machine_model || 'CPAP'}?`)} className="group flex items-center gap-3 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-blue-500 transition-all shadow-sm">
               <div className="w-10 h-10 rounded-lg bg-blue-900/30 text-blue-400 flex items-center justify-center shrink-0">
                 <SlidersHorizontal className="w-6 h-6" />
               </div>
               <div className="text-left">
-                <h3 className="font-semibold text-sm text-slate-100 group-hover:text-blue-400 transition-colors">Ajustar Presión</h3>
-                <p className="text-xs text-slate-400">Modificar flujo de aire</p>
+                <h3 className="font-semibold text-sm text-slate-100 group-hover:text-blue-400 transition-colors">Ajustar su Equipo</h3>
+                <p className="text-xs text-slate-400">Personalizado para su {profile?.machine_model?.split(' ')[0] || 'máquina'}</p>
               </div>
             </button>
             <button onClick={() => handleQuickAction("Siento que me asfixio, ¿qué hago?")} className="group flex items-center gap-3 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-blue-500 transition-all shadow-sm">
@@ -221,13 +256,13 @@ export default function SimbieAI() {
                 <p className="text-xs text-slate-400">Impulso de aire de emergencia</p>
               </div>
             </button>
-            <button onClick={() => handleQuickAction("Necesito pedir repuestos para mi máquina")} className="group flex items-center gap-3 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-blue-500 transition-all shadow-sm">
+            <button onClick={() => handleQuickAction("¿Cómo fue mi registro de sueño anoche?")} className="group flex items-center gap-3 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-blue-500 transition-all shadow-sm">
               <div className="w-10 h-10 rounded-lg bg-green-900/30 text-green-400 flex items-center justify-center shrink-0">
-                <ShoppingCart className="w-6 h-6" />
+                <Brain className="w-6 h-6" />
               </div>
               <div className="text-left">
-                <h3 className="font-semibold text-sm text-slate-100 group-hover:text-blue-400 transition-colors">Pedir Repuestos</h3>
-                <p className="text-xs text-slate-400">Suministros bajos</p>
+                <h3 className="font-semibold text-sm text-slate-100 group-hover:text-blue-400 transition-colors">Analizar Mi Noche</h3>
+                <p className="text-xs text-slate-400">Revisar registros recientes</p>
               </div>
             </button>
             <button onClick={() => handleQuickAction("Quiero hacer ejercicios de desensibilización")} className="group flex items-center gap-3 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-blue-500 transition-all shadow-sm">
@@ -244,8 +279,8 @@ export default function SimbieAI() {
           <div className="w-full">
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 pl-1">Preguntas Sugeridas</h4>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => handleQuickAction("¿Por qué mi máscara tiene fugas?")} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-full text-xs font-medium text-slate-300 transition-colors">
-                "¿Por qué mi máscara tiene fugas?"
+              <button onClick={() => handleQuickAction(`¿Mi máscara ${profile?.mask_model || ''} es compatible con mi presión?`)} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-full text-xs font-medium text-slate-300 transition-colors">
+                "¿Mi máscara es compatible?"
               </button>
               <button onClick={() => handleQuickAction("Muéstrame mi puntaje de sueño")} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-full text-xs font-medium text-slate-300 transition-colors">
                 "Muéstrame mi puntaje de sueño"

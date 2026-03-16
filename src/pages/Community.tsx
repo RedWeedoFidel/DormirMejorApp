@@ -1,120 +1,286 @@
-import { ArrowLeft, Bell, Plus, MoreHorizontal, Heart, MessageCircle, Share2, Shield, Moon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Bell, Plus, MoreHorizontal, Heart, MessageCircle, Share2, Shield, Moon, X, Send, Image as ImageIcon } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { cn } from '../lib/utils';
+import { formatDistanceToNow } from 'date-fns';
+import { es } from 'date-fns/locale';
+
+interface Post {
+    id: string;
+    content: string;
+    image_url: string | null;
+    created_at: string;
+    user_id: string;
+    profiles: {
+        name: string;
+        avatar_url?: string;
+    };
+    likes_count: number;
+    user_has_liked: boolean;
+}
 
 export default function Community() {
-  return (
-    <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans pb-24">
-      <header className="sticky top-0 z-10 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-purple-500/10 dark:border-purple-500/20">
-        <div className="flex items-center justify-between p-4">
-          <button className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors">
-            <ArrowLeft className="w-6 h-6" />
-          </button>
-          <h1 className="text-lg font-bold text-slate-900 dark:text-white">Normalización y Comunidad</h1>
-          <button className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors relative">
-            <Bell className="w-6 h-6" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900"></span>
-          </button>
-        </div>
-      </header>
+    const { user } = useAuth();
+    const [posts, setPosts] = useState<Post[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [showCreateModal, setShowCreateModal] = useState(false);
+    const [newPostContent, setNewPostContent] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
-      <div className="pt-4 pb-2 px-4 overflow-x-auto no-scrollbar">
-        <div className="flex space-x-4 min-w-max">
-          <div className="flex flex-col items-center gap-2">
-            <div className="relative w-[68px] h-[68px] rounded-full border-2 border-dashed border-purple-500/40 flex items-center justify-center bg-purple-500/5">
-              <Plus className="text-purple-600 dark:text-purple-400 w-8 h-8" />
-            </div>
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Compartir</span>
-          </div>
-          
-          {[
-            { name: 'Éxito', img: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?q=80&w=100&auto=format&fit=crop' },
-            { name: 'Consejos', img: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=100&auto=format&fit=crop' },
-            { name: 'Humor', img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=100&auto=format&fit=crop' },
-            { name: 'Viajes', img: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=100&auto=format&fit=crop' },
-          ].map((story, i) => (
-            <div key={i} className="flex flex-col items-center gap-2 cursor-pointer group">
-              <div className="w-[68px] h-[68px] rounded-full p-[2px] bg-gradient-to-tr from-purple-600 to-purple-400 group-hover:scale-105 transition-transform">
-                <div className="w-full h-full rounded-full border-2 border-slate-50 dark:border-slate-900 overflow-hidden bg-slate-200">
-                  <img src={story.img} alt={story.name} className="w-full h-full object-cover" />
+    const fetchPosts = async () => {
+        try {
+            setLoading(true);
+            const { data, error } = await supabase
+                .from('community_posts')
+                .select(`
+                    *,
+                    profiles:user_id (name)
+                `)
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+
+            // Fetch likes for these posts
+            const { data: likesData } = await supabase
+                .from('community_likes')
+                .select('*');
+
+            const processedPosts = data.map((post: any) => ({
+                ...post,
+                likes_count: likesData?.filter(l => l.post_id === post.id).length || 0,
+                user_has_liked: likesData?.some(l => l.post_id === post.id && l.user_id === user?.id) || false
+            }));
+
+            setPosts(processedPosts);
+        } catch (err) {
+            console.error('Error fetching posts:', err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchPosts();
+    }, [user]);
+
+    const handleCreatePost = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user || !newPostContent.trim()) return;
+
+        setIsSubmitting(true);
+        try {
+            const { error } = await supabase.from('community_posts').insert({
+                user_id: user.id,
+                content: newPostContent
+            });
+
+            if (error) throw error;
+
+            setNewPostContent('');
+            setShowCreateModal(false);
+            fetchPosts();
+        } catch (err) {
+            console.error('Error creating post:', err);
+            alert('Error al crear la publicación');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleLike = async (postId: string, hasLiked: boolean) => {
+        if (!user) return;
+
+        try {
+            if (hasLiked) {
+                await supabase.from('community_likes').delete().match({ user_id: user.id, post_id: postId });
+            } else {
+                await supabase.from('community_likes').insert({ user_id: user.id, post_id: postId });
+            }
+            fetchPosts(); // Refresh to update counts
+        } catch (err) {
+            console.error('Error toggling like:', err);
+        }
+    };
+
+    return (
+        <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans pb-24">
+            <header className="sticky top-0 z-10 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-purple-500/10 dark:border-purple-500/20">
+                <div className="flex items-center justify-between p-4">
+                    <button className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors">
+                        <ArrowLeft className="w-6 h-6" />
+                    </button>
+                    <h1 className="text-lg font-bold text-slate-900 dark:text-white">Normalización y Comunidad</h1>
+                    <button className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors relative">
+                        <Bell className="w-6 h-6" />
+                        <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900"></span>
+                    </button>
                 </div>
-              </div>
-              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">{story.name}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+            </header>
 
-      <div className="mt-4 px-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Mentores Destacados</h3>
-          <a href="#" className="text-sm font-semibold text-purple-600 dark:text-purple-400 hover:text-purple-700">Ver todos</a>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-          <div className="flex -space-x-3">
-            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=100&auto=format&fit=crop" alt="Mentor 1" className="w-10 h-10 border-2 border-white dark:border-slate-800 rounded-full object-cover" />
-            <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop" alt="Mentor 2" className="w-10 h-10 border-2 border-white dark:border-slate-800 rounded-full object-cover" />
-            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=100&auto=format&fit=crop" alt="Mentor 3" className="w-10 h-10 border-2 border-white dark:border-slate-800 rounded-full object-cover" />
-            <div className="flex items-center justify-center w-10 h-10 text-xs font-medium text-white bg-purple-600 border-2 border-white dark:border-slate-800 rounded-full hover:bg-purple-700">+8</div>
-          </div>
-          <div className="text-right">
-            <p className="text-sm font-medium text-slate-900 dark:text-white">Peer Support</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Conecta con veteranos</p>
-          </div>
-        </div>
-      </div>
+            {/* Stories/Topics Section (Hardcoded for now as placeholders) */}
+            <div className="pt-4 pb-2 px-4 overflow-x-auto no-scrollbar">
+                <div className="flex space-x-4 min-w-max">
+                    <button 
+                        onClick={() => setShowCreateModal(true)}
+                        className="flex flex-col items-center gap-2"
+                    >
+                        <div className="relative w-[68px] h-[68px] rounded-full border-2 border-dashed border-purple-500/40 flex items-center justify-center bg-purple-500/5 hover:bg-purple-500/10 transition-colors">
+                            <Plus className="text-purple-600 dark:text-purple-400 w-8 h-8" />
+                        </div>
+                        <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Compartir</span>
+                    </button>
+                    
+                    {[
+                        { name: 'Éxito', img: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?q=80&w=100&auto=format&fit=crop' },
+                        { name: 'Consejos', img: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=100&auto=format&fit=crop' },
+                        { name: 'Humor', img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=100&auto=format&fit=crop' },
+                        { name: 'Viajes', img: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=100&auto=format&fit=crop' },
+                    ].map((story, i) => (
+                        <div key={i} className="flex flex-col items-center gap-2 cursor-pointer group">
+                            <div className="w-[68px] h-[68px] rounded-full p-[2px] bg-gradient-to-tr from-purple-600 to-purple-400 group-hover:scale-105 transition-transform">
+                                <div className="w-full h-full rounded-full border-2 border-slate-50 dark:border-slate-900 overflow-hidden bg-slate-200">
+                                    <img src={story.img} alt={story.name} className="w-full h-full object-cover" />
+                                </div>
+                            </div>
+                            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">{story.name}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
 
-      <div className="mt-6 px-4 space-y-6">
-        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div className="p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <img src="https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=100&auto=format&fit=crop" alt="Carlos M." className="w-10 h-10 rounded-full object-cover" />
-              <div>
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Carlos M.</h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Hace 2 horas • Mascarilla Facial</p>
-              </div>
-            </div>
-            <button className="text-slate-400 hover:text-purple-600 dark:hover:text-purple-400">
-              <MoreHorizontal className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="aspect-[4/3] bg-slate-100 dark:bg-slate-700 relative">
-            <img src="https://images.unsplash.com/photo-1541781774459-bb2af2f05b55?q=80&w=800&auto=format&fit=crop" alt="Sleeping peacefully" className="w-full h-full object-cover" />
-            <div className="absolute bottom-4 right-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-bold text-purple-600 dark:text-purple-400 shadow-sm flex items-center gap-1">
-              <Moon className="w-3 h-3" />
-              Noche 45
-            </div>
-          </div>
-          <div className="p-4">
-            <div className="flex items-center gap-4 mb-3">
-              <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors">
-                <Heart className="w-5 h-5" />
-                <span className="text-sm font-medium">124</span>
-              </button>
-              <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors">
-                <MessageCircle className="w-5 h-5" />
-                <span className="text-sm font-medium">18</span>
-              </button>
-              <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors ml-auto">
-                <Share2 className="w-5 h-5" />
-              </button>
-            </div>
-            <p className="text-slate-800 dark:text-slate-200 text-sm leading-relaxed">
-              <span className="font-bold">¡Por fin sin sueño!</span> Al principio me costó adaptarme a la presión, pero hoy desperté sintiéndome como nuevo. Si estás empezando, no te rindas, vale la pena. 💪✨ #CPAPJourney #DormirMejor
-            </p>
-          </div>
-        </div>
+            <div className="mt-6 px-4 space-y-6">
+                {loading ? (
+                    <div className="flex justify-center py-10">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                    </div>
+                ) : posts.length === 0 ? (
+                    <div className="text-center py-10 bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700">
+                        <p className="text-slate-500">Aún no hay publicaciones. ¡Sé el primero en compartir!</p>
+                    </div>
+                ) : (
+                    posts.map((post) => (
+                        <div key={post.id} className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className="p-4 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 font-bold">
+                                        {post.profiles?.name?.charAt(0) || 'U'}
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">{post.profiles?.name || 'Usuario'}</h4>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                            {formatDistanceToNow(new Date(post.created_at), { addSuffix: true, locale: es })}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button className="text-slate-400 hover:text-purple-600 dark:hover:text-purple-400">
+                                    <MoreHorizontal className="w-5 h-5" />
+                                </button>
+                            </div>
+                            
+                            {post.image_url && (
+                                <div className="aspect-[4/3] bg-slate-100 dark:bg-slate-700 relative">
+                                    <img src={post.image_url} alt="Post content" className="w-full h-full object-cover" />
+                                </div>
+                            )}
 
-        <div className="bg-gradient-to-r from-purple-600 to-purple-500 rounded-3xl p-6 text-white relative overflow-hidden shadow-lg">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
-          <div className="relative z-10">
-            <h3 className="text-xl font-bold mb-2">Tu historia importa</h3>
-            <p className="text-white/90 text-sm mb-4">Ayuda a otros a normalizar su terapia compartiendo tu progreso.</p>
-            <button className="bg-white text-purple-600 px-5 py-2.5 rounded-full text-sm font-bold hover:bg-slate-100 transition-colors shadow-sm flex items-center gap-2">
-              <Plus className="w-5 h-5" />
-              Compartir mi Proceso
-            </button>
-          </div>
+                            <div className="p-4">
+                                <p className="text-slate-800 dark:text-slate-200 text-sm leading-relaxed mb-4">
+                                    {post.content}
+                                </p>
+                                <div className="flex items-center gap-4">
+                                    <button 
+                                        onClick={() => handleLike(post.id, post.user_has_liked)}
+                                        className={cn(
+                                            "flex items-center gap-1 transition-colors",
+                                            post.user_has_liked ? "text-red-500" : "text-slate-600 dark:text-slate-400 hover:text-red-500"
+                                        )}
+                                    >
+                                        <Heart className={cn("w-5 h-5", post.user_has_liked && "fill-current")} />
+                                        <span className="text-sm font-medium">{post.likes_count}</span>
+                                    </button>
+                                    <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors">
+                                        <MessageCircle className="w-5 h-5" />
+                                        <span className="text-sm font-medium">0</span>
+                                    </button>
+                                    <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors ml-auto">
+                                        <Share2 className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    ))
+                )}
+
+                {/* Promotional Card */}
+                <div className="bg-gradient-to-r from-purple-600 to-purple-500 rounded-3xl p-6 text-white relative overflow-hidden shadow-lg shadow-purple-900/20">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+                    <div className="relative z-10">
+                        <h3 className="text-xl font-bold mb-2">Tu historia importa</h3>
+                        <p className="text-white/90 text-sm mb-4">Ayuda a otros a normalizar su terapia compartiendo tu progreso.</p>
+                        <button 
+                            onClick={() => setShowCreateModal(true)}
+                            className="bg-white text-purple-600 px-5 py-2.5 rounded-full text-sm font-bold hover:bg-slate-100 transition-all shadow-sm flex items-center gap-2 active:scale-95"
+                        >
+                            <Plus className="w-5 h-5" />
+                            Compartir mi Proceso
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Create Post Modal */}
+            {showCreateModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="bg-white dark:bg-slate-800 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-700">
+                        <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-700">
+                            <h3 className="font-bold text-lg">Nueva Publicación</h3>
+                            <button 
+                                onClick={() => setShowCreateModal(false)}
+                                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
+                            >
+                                <X className="w-5 h-5 text-slate-500" />
+                            </button>
+                        </div>
+                        <form onSubmit={handleCreatePost} className="p-4 space-y-4">
+                            <div className="flex gap-3">
+                                <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 font-bold shrink-0">
+                                    {user?.email?.charAt(0).toUpperCase() || 'U'}
+                                </div>
+                                <textarea
+                                    value={newPostContent}
+                                    onChange={(e) => setNewPostContent(e.target.value)}
+                                    placeholder="¿Cómo va tu terapia hoy? Comparte un éxito o pide consejo..."
+                                    className="w-full bg-transparent border-none focus:ring-0 text-slate-900 dark:text-white placeholder-slate-400 resize-none min-h-[120px] text-lg"
+                                    autoFocus
+                                />
+                            </div>
+                            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
+                                <div className="flex gap-2">
+                                    <button type="button" className="p-2 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-xl transition-colors">
+                                        <ImageIcon className="w-6 h-6" />
+                                    </button>
+                                    <button type="button" className="p-2 text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-xl transition-colors">
+                                        <Shield className="w-6 h-6" />
+                                    </button>
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={isSubmitting || !newPostContent.trim()}
+                                    className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2.5 px-6 rounded-2xl flex items-center gap-2 transition-all active:scale-95"
+                                >
+                                    {isSubmitting ? 'Publicando...' : (
+                                        <>
+                                            Publicar
+                                            <Send className="w-4 h-4" />
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
-      </div>
-    </div>
-  );
+    );
 }
