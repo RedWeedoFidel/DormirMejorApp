@@ -1,20 +1,43 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# 🌙 DormirMejorApp - Tu Compañero de Descanso
 
-# Run and deploy your AI Studio app
+DormirMejorApp es una aplicación diseñada para transformar la vida de pacientes con apnea del sueño. Combinamos el seguimiento médico con el poder de la Inteligencia Artificial (Simbie AI) para que cada noche sea un paso hacia una mejor salud.
 
-This contains everything you need to run your app locally.
+---
 
-View your app in AI Studio: https://ai.studio/apps/5a9a82cc-d5a1-4442-beb1-7820e7f36822
+## 🚀 Estado Actual del Proyecto (v1.5.0)
+**Estado**: Estable y Funcional.
+Todo el sistema de **Onboarding** y el **Dashboard principal** han sido validados y funcionan correctamente.
 
-## Run Locally
+### ✨ Funcionalidades Estrella
+1.  **Simbie AI (Visión Artificial)**: Simbie ahora puede "ver". Puedes subir fotos de tu equipo CPAP o de tu cara con la máscara, y Simbie analizará posibles fugas o errores.
+    - *Nota técnica*: Las imágenes se optimizan automáticamente antes de enviarse para ahorrar datos y evitar errores.
+2.  **Dashboard Inteligente**: Resumen de tus horas de sueño, calidad y "niebla mental".
+3.  **Comunidad**: Espacio social para compartir consejos (Próximamente: subida de fotos en posts).
+4.  **Onboarding Guiado**: Configuración fácil de tu equipo y presión médica.
 
-**Prerequisites:**  Node.js
+---
 
+## 🛠️ Lo que hemos arreglado hoy (Historial técnico)
+*Si eres programador o IA, lee esto para entender los últimos cambios:*
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- **Arreglo de Pantalla de Carga**: Se añadió un sistema de seguridad que evita que la app se quede bloqueada en "Cargando..." si la base de datos tarda en responder.
+- **Simbie AI Multimodal**: Implementado el soporte para imágenes en el chat. Se utiliza `gemini-1.5-flash` con un sistema de reintentos automático para asegurar respuestas rápidas.
+- **Optimización de Imágenes**: La app ahora reduce el tamaño de las fotos automáticamente en el móvil/navegador antes de subirlas (máx 1024px, calidad 80%).
+
+---
+
+## 📂 Guía Rápida para Desarrolladores (o Agentes de IA)
+- **Tecnologías**: React 19, Supabase, Google Gemini.
+- **Base de Datos**: Tablas `user_profiles`, `sleep_records` y `community_posts`.
+- **Variables necesarias**: `GEMINI_API_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+
+---
+
+## 📝 Próximos pasos (Backlog de Fidel)
+- [ ] **Fotos en Comunidad**: Permitir que los usuarios suban fotos en sus publicaciones del feed.
+- [ ] **Sincronización Google Fit**: Conectar automáticamente los datos de otros relojes/apps de salud.
+- [ ] **Notificaciones**: Avisos para limpiar la máscara y el filtro.
+
+---
+
+*Este archivo es la única fuente de verdad del proyecto. Actualizado el 17 de marzo, 2026.*
