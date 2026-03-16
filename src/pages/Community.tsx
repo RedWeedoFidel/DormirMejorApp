@@ -21,10 +21,25 @@ interface Post {
     user_has_liked: boolean;
 }
 
+interface Notification {
+    id: string;
+    type: 'like' | 'reply' | 'mention' | 'system';
+    actor_id: string;
+    post_id: string;
+    read: boolean;
+    created_at: string;
+    actor_profiles?: {
+        name: string;
+        avatar_url?: string;
+    };
+}
+
 export default function Community() {
     const { user } = useAuth();
     const { hasUnreadNotifications, setHasUnreadNotifications } = useAppContext();
     const [posts, setPosts] = useState<Post[]>([]);
+    const [notifications, setNotifications] = useState<Notification[]>([]);
+    const [showNotifications, setShowNotifications] = useState(false);
     const [loading, setLoading] = useState(true);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [newPostContent, setNewPostContent] = useState('');
@@ -69,11 +84,48 @@ export default function Community() {
         }
     };
 
+    const fetchNotifications = async () => {
+        if (!user) return;
+        try {
+            const { data, error } = await supabase
+                .from('notifications')
+                .select(`
+                    *,
+                    actor_profiles:actor_id(name, avatar_url)
+                `)
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+            if (error) throw error;
+            setNotifications(data || []);
+            const unread = data?.some(n => !n.read) || false;
+            setHasUnreadNotifications(unread);
+        } catch (err) {
+            console.error('Error fetching notifications:', err);
+        }
+    };
+
     useEffect(() => {
         fetchPosts();
-        // Clear notifications when visiting
-        setHasUnreadNotifications(false);
+        fetchNotifications();
     }, [user]);
+
+    const markNotificationsAsRead = async () => {
+        if (!user || notifications.length === 0) return;
+        try {
+            const { error } = await supabase
+                .from('notifications')
+                .update({ read: true })
+                .eq('user_id', user.id)
+                .eq('read', false);
+
+            if (error) throw error;
+            setHasUnreadNotifications(false);
+            setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+        } catch (err) {
+            console.error('Error marking notifications as read:', err);
+        }
+    };
 
     const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -200,7 +252,20 @@ export default function Community() {
             if (hasLiked) {
                 await supabase.from('community_likes').delete().match({ user_id: user.id, post_id: postId });
             } else {
-                await supabase.from('community_likes').insert({ user_id: user.id, post_id: postId });
+                const { error } = await supabase.from('community_likes').insert({ user_id: user.id, post_id: postId });
+                
+                if (!error) {
+                    // Get the author of the post to notify them
+                    const post = posts.find(p => p.id === postId);
+                    if (post && post.user_id !== user.id) {
+                        await supabase.from('notifications').insert({
+                            user_id: post.user_id,
+                            actor_id: user.id,
+                            type: 'like',
+                            post_id: postId
+                        });
+                    }
+                }
             }
             fetchPosts(); // Refresh to update counts
         } catch (err) {
@@ -216,7 +281,13 @@ export default function Community() {
                         <ArrowLeft className="w-6 h-6" />
                     </button>
                     <h1 className="text-lg font-bold text-slate-900 dark:text-white">Normalización y Comunidad</h1>
-                    <button className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors relative">
+                    <button 
+                        onClick={() => {
+                            setShowNotifications(true);
+                            markNotificationsAsRead();
+                        }}
+                        className="text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 rounded-full p-2 transition-colors relative"
+                    >
                         <Bell className="w-6 h-6" />
                         {hasUnreadNotifications && (
                             <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
@@ -424,6 +495,66 @@ export default function Community() {
                                 </div>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+            {/* Notifications Tray */}
+            {showNotifications && (
+                <div className="fixed inset-0 z-[60] flex justify-end animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowNotifications(false)} />
+                    <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 h-full shadow-2xl animate-in slide-in-from-right duration-500">
+                        <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800">
+                            <h3 className="font-bold text-lg flex items-center gap-2">
+                                <Bell className="w-5 h-5 text-purple-600" />
+                                Notificaciones
+                            </h3>
+                            <button 
+                                onClick={() => setShowNotifications(false)}
+                                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="overflow-y-auto h-[calc(100vh-64px)] pb-20">
+                            {notifications.length === 0 ? (
+                                <div className="p-8 text-center space-y-4">
+                                    <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto">
+                                        <Bell className="w-8 h-8 text-slate-400" />
+                                    </div>
+                                    <p className="text-slate-500">No tienes notificaciones todavía.</p>
+                                </div>
+                            ) : (
+                                <div className="divide-y divide-slate-50 dark:divide-slate-800">
+                                    {notifications.map((n) => (
+                                        <div 
+                                            key={n.id} 
+                                            className={cn(
+                                                "p-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer",
+                                                !n.read && "bg-blue-50/30 dark:bg-blue-900/10"
+                                            )}
+                                        >
+                                            <div className="w-12 h-12 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-lg font-bold text-purple-600 shrink-0">
+                                                {n.actor_profiles?.name?.charAt(0) || 'U'}
+                                            </div>
+                                            <div className="flex-1">
+                                                <p className="text-sm">
+                                                    <span className="font-bold">{n.actor_profiles?.name}</span>
+                                                    {n.type === 'like' && " le ha dado me gusta a tu publicación."}
+                                                    {n.type === 'reply' && " ha respondido a tu publicación."}
+                                                    {n.type === 'mention' && " te ha mencionado."}
+                                                </p>
+                                                <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider">
+                                                    {formatDistanceToNow(new Date(n.created_at), { addSuffix: true, locale: es })}
+                                                </p>
+                                            </div>
+                                            {!n.read && (
+                                                <div className="w-2 h-2 bg-blue-500 rounded-full shrink-0" />
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}
