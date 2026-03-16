@@ -42,7 +42,7 @@ export default function Community() {
                 .from('community_posts')
                 .select(`
                     *,
-                    profiles:public_profiles (name)
+                    profiles:user_id(name)
                 `)
                 .order('created_at', { ascending: false });
 
