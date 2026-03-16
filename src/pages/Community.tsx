@@ -338,7 +338,11 @@ export default function Community() {
                     </div>
                 ) : (
                     posts.map((post) => (
-                        <div key={post.id} className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div 
+                            key={post.id} 
+                            id={`post-${post.id}`}
+                            className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500 scroll-mt-20"
+                        >
                             <div className="p-4 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 font-bold">
@@ -528,6 +532,13 @@ export default function Community() {
                                     {notifications.map((n) => (
                                         <div 
                                             key={n.id} 
+                                            onClick={() => {
+                                                setShowNotifications(false);
+                                                if (n.post_id) {
+                                                    const el = document.getElementById(`post-${n.post_id}`);
+                                                    el?.scrollIntoView({ behavior: 'smooth' });
+                                                }
+                                            }}
                                             className={cn(
                                                 "p-4 flex items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer",
                                                 !n.read && "bg-blue-50/30 dark:bg-blue-900/10"
