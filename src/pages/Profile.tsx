@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Star, Zap, Settings, Edit2, Rocket, Award, Lock, User, Shield, Activity, Globe, Bell, Moon, Filter, Clock, ShoppingCart, Fingerprint, Gavel, LogOut, ChevronRight, ExternalLink, X, Compass, Anchor, BatteryFull, Flame, Sparkles, Target, Heart, Cloud, Crosshair, Droplets, Wind, Snowflake, Sun, Medal, Crown, Flag, Trophy, Navigation } from 'lucide-react';
+import { Star, Zap, Settings, Edit2, Rocket, Award, Lock, User, Shield, Activity, Globe, Bell, Moon, Filter, Clock, ShoppingCart, Fingerprint, Gavel, LogOut, ChevronRight, ExternalLink, X, Compass, Anchor, BatteryFull, Flame, Sparkles, Target, Heart, Cloud, Crosshair, Droplets, Wind, Snowflake, Sun, Medal, Crown, Flag, Trophy, Navigation, Camera, ImageIcon, MessageCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,8 +14,33 @@ export default function Profile() {
 
   const [profile, setProfile] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [notificationSettings, setNotificationSettings] = useState({
+    likes: true,
+    comments: true,
+    mentions: true,
+    tips: true,
+    reminders: true
+  });
+  const [notificationModalOpen, setNotificationModalOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [fitConnected, setFitConnected] = useState(false);
+  const avatarInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Modal states
+  const [pinModalState, setPinModalState] = useState<'none' | 'create' | 'enter'>('none');
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [toast, setToast] = useState<{ text: string; type: 'success' | 'warning' } | null>(null);
+  const [daysWithoutCleaning, setDaysWithoutCleaning] = useState(0);
+
+  const [medicalModalOpen, setMedicalModalOpen] = useState(false);
+  const [medicalForm, setMedicalForm] = useState({
+    machine_model: '',
+    mask_model: '',
+    prescribed_pressure: '',
+    apnea_severity: '',
+    last_psg_date: ''
+  });
 
   useEffect(() => {
     if (user) {
@@ -35,7 +60,19 @@ export default function Profile() {
             statsData = newStats;
           }
 
-          if (profileData) setProfile(profileData);
+          if (profileData) {
+            setProfile(profileData);
+            if (profileData.notification_settings) {
+              setNotificationSettings(profileData.notification_settings);
+            }
+            setMedicalForm({
+              machine_model: profileData.machine_model || '',
+              mask_model: profileData.mask_model || '',
+              prescribed_pressure: profileData.prescribed_pressure?.toString() || '',
+              apnea_severity: profileData.apnea_severity || '',
+              last_psg_date: profileData.last_psg_date || ''
+            });
+          }
           if (statsData) {
             setStats(statsData);
             if (statsData.days_without_cleaning !== undefined) {
@@ -50,15 +87,8 @@ export default function Profile() {
     }
   }, [user]);
 
-  // Modal states
-  const [pinModalState, setPinModalState] = useState<'none' | 'create' | 'enter'>('none');
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
-  const [toast, setToast] = useState<{ text: string; type: 'success' | 'warning' } | null>(null);
-  const [daysWithoutCleaning, setDaysWithoutCleaning] = useState(5);
-
   useEffect(() => {
-    if (mode === 'adult' && daysWithoutCleaning >= 5) {
+    if (mode === 'adult' && stats && daysWithoutCleaning >= 5) {
       setToast({
         text: `¡Aviso! Llevas ${daysWithoutCleaning} días sin limpiar la máscara. Por favor, límpiala pronto.`,
         type: 'warning'
@@ -66,7 +96,7 @@ export default function Profile() {
       const timer = setTimeout(() => setToast(null), 5000);
       return () => clearTimeout(timer);
     }
-  }, [mode, daysWithoutCleaning]);
+  }, [mode, daysWithoutCleaning, stats]);
 
   const handleCleaning = async () => {
     setDaysWithoutCleaning(0);
@@ -148,11 +178,47 @@ export default function Profile() {
     }
   };
 
+  const handleMedicalSubmit = async () => {
+    if (!user) return;
+    try {
+      const updates = {
+        machine_model: medicalForm.machine_model,
+        mask_model: medicalForm.mask_model,
+        prescribed_pressure: medicalForm.prescribed_pressure ? parseFloat(medicalForm.prescribed_pressure) : null,
+        apnea_severity: medicalForm.apnea_severity,
+        last_psg_date: medicalForm.last_psg_date || null,
+        in_treatment: true 
+      };
+
+      const { error } = await supabase.from('user_profiles').update(updates).eq('id', user.id);
+      if (error) throw error;
+
+      setProfile({ ...profile, ...updates });
+      setMedicalModalOpen(false);
+      setToast({ text: 'Información médica actualizada.', type: 'success' });
+      setTimeout(() => setToast(null), 3000);
+    } catch (err) {
+      console.error("Error updating medical info:", err);
+      setToast({ text: 'Error al actualizar información.', type: 'warning' });
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
+
   const handleForgotPin = () => {
     setToast({ text: 'Se ha enviado un correo con instrucciones para restablecer el PIN.', type: 'success' });
     setTimeout(() => setToast(null), 3000);
     setPinModalState('none');
     setPinInput('');
+  };
+
+  const handleNotificationSettingChange = async (key: string, value: boolean) => {
+    const updatedSettings = { ...notificationSettings, [key]: value };
+    setNotificationSettings(updatedSettings);
+    
+    // Optimistic update in DB
+    if (user) {
+      await supabase.from('user_profiles').update({ notification_settings: updatedSettings }).eq('id', user.id);
+    }
   };
 
   // Render PIN Modal
@@ -228,18 +294,171 @@ export default function Profile() {
     );
   };
 
+  // Render Medical Info Modal
+  const renderMedicalModal = () => {
+    if (!medicalModalOpen) return null;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm px-4">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-slate-200 dark:border-slate-700 relative max-h-[90vh] overflow-y-auto">
+          <button
+            onClick={() => setMedicalModalOpen(false)}
+            className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="text-center mb-6">
+            <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-3">
+              <Shield className="w-6 h-6" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Editar Información Médica</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Actualiza los detalles de tu tratamiento.</p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Modelo de Máquina</label>
+              <input
+                type="text"
+                value={medicalForm.machine_model}
+                onChange={(e) => setMedicalForm({ ...medicalForm, machine_model: e.target.value })}
+                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 outline-none"
+                placeholder="Ej. ResMed AirSense 10"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Modelo de Máscara</label>
+              <input
+                type="text"
+                value={medicalForm.mask_model}
+                onChange={(e) => setMedicalForm({ ...medicalForm, mask_model: e.target.value })}
+                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 outline-none"
+                placeholder="Ej. AirFit F20"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Presión (cmH2O)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={medicalForm.prescribed_pressure}
+                  onChange={(e) => setMedicalForm({ ...medicalForm, prescribed_pressure: e.target.value })}
+                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  placeholder="Ej. 10.5"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Severidad</label>
+                <select
+                  value={medicalForm.apnea_severity}
+                  onChange={(e) => setMedicalForm({ ...medicalForm, apnea_severity: e.target.value })}
+                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 outline-none"
+                >
+                  <option value="">Seleccionar...</option>
+                  <option value="Leve">Leve</option>
+                  <option value="Moderada">Moderada</option>
+                  <option value="Grave">Grave</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Fecha Última Prueba (PSG)</label>
+              <input
+                type="date"
+                value={medicalForm.last_psg_date}
+                onChange={(e) => setMedicalForm({ ...medicalForm, last_psg_date: e.target.value })}
+                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 outline-none"
+              />
+            </div>
+
+            <button
+              onClick={handleMedicalSubmit}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors mt-2"
+            >
+              Guardar Cambios
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Render Notification Settings Modal
+  const renderNotificationModal = () => {
+    if (!notificationModalOpen) return null;
+
+    const sections = [
+      { id: 'likes', label: 'Me gustas', desc: 'Cuando alguien le da corazón a tu post', icon: Heart },
+      { id: 'comments', label: 'Comentarios', desc: 'Cuando alguien comenta en tu publicación', icon: MessageCircle },
+      { id: 'mentions', label: 'Menciones', desc: 'Cuando te mencionan en la comunidad', icon: User },
+      { id: 'tips', label: 'Consejos Diarios', desc: 'Nuevos tips de sueño personalizados', icon: Sparkles },
+      { id: 'reminders', label: 'Recordatorios', desc: 'Limpieza de equipo y racha diaria', icon: Clock },
+    ];
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm px-4">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-slate-200 dark:border-slate-700 relative">
+          <button
+            onClick={() => setNotificationModalOpen(false)}
+            className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="text-center mb-6">
+            <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-3">
+              <Bell className="w-6 h-6" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Ajustes de Notificaciones</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Elige qué avisos quieres recibir en tu móvil.</p>
+          </div>
+
+          <div className="space-y-1">
+            {sections.map((section) => {
+              const Icon = section.icon;
+              return (
+                <div key={section.id} className="flex items-center justify-between py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-slate-100 dark:bg-slate-900 rounded-lg text-slate-500">
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold leading-none">{section.label}</p>
+                      <p className="text-[10px] text-slate-500 mt-1">{section.desc}</p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer" 
+                      checked={(notificationSettings as any)[section.id]} 
+                      onChange={(e) => handleNotificationSettingChange(section.id, e.target.checked)} 
+                    />
+                    <div className="w-10 h-5 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => setNotificationModalOpen(false)}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors mt-6"
+          >
+            Listo
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   if (mode === 'child') {
     return (
       <div className="flex flex-col min-h-screen bg-slate-900 text-slate-100 font-sans pb-24 relative overflow-hidden">
         {renderPinModal()}
-        {toast && (
-          <div className={cn(
-            "fixed top-4 left-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-center animate-in fade-in slide-in-from-top-4",
-            toast.type === 'warning' ? "bg-red-500 text-white" : "bg-emerald-500 text-white"
-          )}>
-            {toast.text}
-          </div>
-        )}
+        {renderMedicalModal()}
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900 to-slate-800 pointer-events-none"></div>
 
         <header className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
@@ -254,7 +473,7 @@ export default function Profile() {
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700">
-              <Zap className="text-yellow-400 w-4 h-4" />
+              < Zap className="text-yellow-400 w-4 h-4" />
               <span className="text-sm font-bold text-white">{stats?.streak_days || 0} Días</span>
             </div>
             <button
@@ -271,8 +490,14 @@ export default function Profile() {
           <section className="flex flex-col items-center justify-center gap-6 py-4">
             <div className="relative group">
               <div className="absolute -inset-4 bg-blue-500/20 blur-2xl rounded-full opacity-70 group-hover:opacity-100 transition-opacity"></div>
-              <div className="relative w-40 h-40 rounded-full border-4 border-slate-800 bg-slate-700 overflow-hidden shadow-2xl">
-                <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop" alt="Avatar" className="w-full h-full object-cover" />
+              <div className="relative w-40 h-40 rounded-full border-4 border-slate-800 bg-slate-700 overflow-hidden shrink-0 shadow-2xl">
+                {profile?.avatar_url ? (
+                  <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-slate-700">
+                    <User className="w-20 h-20 text-slate-500" />
+                  </div>
+                )}
               </div>
               <button className="absolute bottom-0 right-0 w-10 h-10 bg-blue-600 hover:bg-blue-500 text-white rounded-full flex items-center justify-center shadow-lg border-2 border-slate-900 transition-transform active:scale-95">
                 <Edit2 className="w-5 h-5" />
@@ -316,7 +541,7 @@ export default function Profile() {
                 { title: 'Oso Hibernando', desc: '10 horas de sueño', icon: Moon, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20', shadow: 'shadow-[0_0_15px_rgba(59,130,246,0.15)]', unlocked: false },
                 { title: 'Gota de Agua', desc: 'Humidificador 10 días', icon: Droplets, color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', shadow: 'shadow-[0_0_15px_rgba(34,211,238,0.15)]', unlocked: false },
                 { title: 'Viento Suave', desc: 'Presión óptima 30 días', icon: Wind, color: 'text-teal-400', bg: 'bg-teal-500/10', border: 'border-teal-500/20', shadow: 'shadow-[0_0_15px_rgba(45,212,191,0.15)]', unlocked: false },
-                { title: 'Hielo Cósmico', desc: '30 días en invierno', icon: Snowflake, color: 'text-blue-300', bg: 'bg-blue-400/10', border: 'border-blue-400/20', shadow: 'shadow-[0_0_15px_rgba(147,197,253,0.15)]', unlocked: false },
+                { title: 'Hielo Cósmico', desc: '30 días en invierno', icon: Snowflake, color: 'text-blue-300', bg: 'bg-blue-400/10', border: 'border-blue-300/20', shadow: 'shadow-[0_0_15px_rgba(147,197,253,0.15)]', unlocked: false },
                 { title: 'Sol Radiante', desc: '30 días en verano', icon: Sun, color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20', shadow: 'shadow-[0_0_15px_rgba(249,115,22,0.15)]', unlocked: false },
                 { title: 'Campeón', desc: '1000 horas de vuelo', icon: Medal, color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/20', shadow: 'shadow-[0_0_15px_rgba(250,204,21,0.15)]', unlocked: false },
                 { title: 'Leyenda', desc: '2 años de uso', icon: Crown, color: 'text-yellow-500', bg: 'bg-yellow-600/10', border: 'border-yellow-600/20', shadow: 'shadow-[0_0_15px_rgba(234,179,8,0.15)]', unlocked: false },
@@ -349,6 +574,8 @@ export default function Profile() {
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans pb-24 relative overflow-hidden">
       {renderPinModal()}
+      {renderMedicalModal()}
+      {renderNotificationModal()}
       {toast && (
         <div className={cn(
           "fixed top-4 left-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-center animate-in fade-in slide-in-from-top-4",
@@ -365,13 +592,38 @@ export default function Profile() {
         {/* User Info Section */}
         <div className="flex flex-col items-center p-6 gap-4">
           <div className="relative">
-            <div
-              className="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-24 w-24 border-4 border-blue-600/20"
-              style={{ backgroundImage: 'url("https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop")' }}
-            ></div>
-            <div className="absolute bottom-0 right-0 bg-blue-600 text-white p-1.5 rounded-full border-2 border-slate-50 dark:border-slate-900 shadow-sm flex items-center justify-center">
-              <Edit2 className="w-4 h-4" />
+            <div className="h-24 w-24 rounded-full border-4 border-blue-600/20 overflow-hidden shrink-0 flex items-center justify-center bg-slate-200 dark:bg-slate-700">
+              {profile?.avatar_url ? (
+                <img 
+                  src={profile.avatar_url} 
+                  alt="Profile" 
+                  className="w-full h-full object-cover" 
+                />
+              ) : (
+                <User className="w-12 h-12 text-slate-400" />
+              )}
             </div>
+            <div className="absolute bottom-0 right-0 bg-blue-600 text-white p-1.5 rounded-full border-2 border-slate-50 dark:border-slate-900 shadow-sm flex items-center justify-center cursor-pointer" onClick={() => avatarInputRef.current?.click()}>
+              <Camera className="w-4 h-4" />
+            </div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file || !user) return;
+                const fileExt = file.name.split('.').pop();
+                const fileName = `${user.id}/avatar.${fileExt}`;
+                const { error } = await supabase.storage.from('avatars').upload(fileName, file, { upsert: true });
+                if (error) { console.error(error); return; }
+                const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
+                const url = `${data.publicUrl}?t=${Date.now()}`;
+                await supabase.from('user_profiles').update({ avatar_url: url }).eq('id', user.id);
+                setProfile({ ...profile, avatar_url: url });
+              }}
+            />
           </div>
           <div className="flex flex-col items-center justify-center">
             <p className="text-[22px] font-bold leading-tight text-center">{profile?.name || 'Usuario'}</p>
@@ -384,9 +636,18 @@ export default function Profile() {
 
         {/* Medical Information */}
         <div className="mt-2 mx-4 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <h3 className="text-lg font-bold px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 flex items-center gap-2">
-            <Shield className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            Información Médica
+          <h3 className="text-lg font-bold px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              Información Médica
+            </div>
+            <button 
+              onClick={() => setMedicalModalOpen(true)}
+              className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-blue-600 dark:text-blue-400 transition-colors"
+              title="Editar información médica"
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
           </h3>
           <div className="p-4 flex flex-col gap-3">
             <div className="flex justify-between items-center">
@@ -415,7 +676,7 @@ export default function Profile() {
             )}
             <div className="flex justify-between items-center">
               <p className="text-slate-500 dark:text-slate-400 text-sm">Última polisomnografía</p>
-              <p className="text-sm font-medium">12/05/2023</p>
+              <p className="text-sm font-medium">{profile?.last_psg_date ? new Date(profile.last_psg_date).toLocaleDateString() : 'No indicada'}</p>
             </div>
           </div>
         </div>
@@ -451,16 +712,19 @@ export default function Profile() {
                 <ChevronRight className="w-4 h-4" />
               </div>
             </button>
-            <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700">
+            <button 
+              onClick={() => setNotificationModalOpen(true)}
+              className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-900 transition-colors text-left w-full"
+            >
               <div className="flex items-center gap-3">
                 <Bell className="w-5 h-5 text-slate-500 dark:text-slate-400" />
                 <span className="text-sm font-medium">Notificaciones</span>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" className="sr-only peer" checked={notifications} onChange={() => setNotifications(!notifications)} />
-                <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
+              <div className="flex items-center gap-1 text-slate-500 dark:text-slate-400">
+                <span className="text-sm">Personalizar</span>
+                <ChevronRight className="w-4 h-4" />
+              </div>
+            </button>
             <div className="flex justify-between items-center p-4">
               <div className="flex items-center gap-3">
                 <Moon className="w-5 h-5 text-slate-500 dark:text-slate-400" />
