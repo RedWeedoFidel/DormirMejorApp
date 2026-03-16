@@ -19,6 +19,19 @@ interface Post {
     };
     likes_count: number;
     user_has_liked: boolean;
+    comments_count: number;
+}
+
+interface Comment {
+    id: string;
+    post_id: string;
+    content: string;
+    created_at: string;
+    user_id: string;
+    profiles: {
+        name: string;
+        avatar_url?: string;
+    };
 }
 
 interface Notification {
@@ -45,6 +58,13 @@ export default function Community() {
     const [newPostContent, setNewPostContent] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     
+    // Comments State
+    const [showComments, setShowComments] = useState(false);
+    const [selectedPostForComments, setSelectedPostForComments] = useState<Post | null>(null);
+    const [comments, setComments] = useState<Comment[]>([]);
+    const [newComment, setNewComment] = useState('');
+    const [loadingComments, setLoadingComments] = useState(false);
+    
     // Image Upload State
     const [selectedImage, setSelectedImage] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -70,10 +90,16 @@ export default function Community() {
                 .from('community_likes')
                 .select('*');
 
+            // Fetch comments count
+            const { data: commentsData } = await supabase
+                .from('community_comments')
+                .select('post_id');
+
             const processedPosts = data.map((post: any) => ({
                 ...post,
                 likes_count: likesData?.filter(l => l.post_id === post.id).length || 0,
-                user_has_liked: likesData?.some(l => l.post_id === post.id && l.user_id === user?.id) || false
+                user_has_liked: likesData?.some(l => l.post_id === post.id && l.user_id === user?.id) || false,
+                comments_count: commentsData?.filter(c => c.post_id === post.id).length || 0
             }));
 
             setPosts(processedPosts);
@@ -245,6 +271,72 @@ export default function Community() {
         }
     };
 
+    const fetchComments = async (postId: string) => {
+        try {
+            setLoadingComments(true);
+            const { data, error } = await supabase
+                .from('community_comments')
+                .select(`
+                    *,
+                    profiles:user_id(name, avatar_url)
+                `)
+                .eq('post_id', postId)
+                .order('created_at', { ascending: true });
+
+            if (error) throw error;
+            setComments(data || []);
+        } catch (err) {
+            console.error('Error fetching comments:', err);
+        } finally {
+            setLoadingComments(false);
+        }
+    };
+
+    const handleAddComment = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user || !newComment.trim() || !selectedPostForComments) return;
+
+        try {
+            const { data, error } = await supabase
+                .from('community_comments')
+                .insert({
+                    post_id: selectedPostForComments.id,
+                    user_id: user.id,
+                    content: newComment.trim()
+                })
+                .select(`
+                    *,
+                    profiles:user_id(name, avatar_url)
+                `)
+                .single();
+
+            if (error) throw error;
+
+            setComments(prev => [...prev, data]);
+            setNewComment('');
+            
+            // Notify post author
+            if (selectedPostForComments.user_id !== user.id) {
+                await supabase.from('notifications').insert({
+                    user_id: selectedPostForComments.user_id,
+                    actor_id: user.id,
+                    type: 'reply',
+                    post_id: selectedPostForComments.id,
+                    content: newComment.substring(0, 50)
+                });
+            }
+
+            // Update local count
+            setPosts(prev => prev.map(p => 
+                p.id === selectedPostForComments.id 
+                    ? { ...p, comments_count: p.comments_count + 1 } 
+                    : p
+            ));
+        } catch (err) {
+            console.error('Error adding comment:', err);
+        }
+    };
+
     const handleLike = async (postId: string, hasLiked: boolean) => {
         if (!user) return;
 
@@ -381,9 +473,16 @@ export default function Community() {
                                         <Heart className={cn("w-5 h-5", post.user_has_liked && "fill-current")} />
                                         <span className="text-sm font-medium">{post.likes_count}</span>
                                     </button>
-                                    <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors">
+                                    <button 
+                                        onClick={() => {
+                                            setSelectedPostForComments(post);
+                                            setShowComments(true);
+                                            fetchComments(post.id);
+                                        }}
+                                        className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors"
+                                    >
                                         <MessageCircle className="w-5 h-5" />
-                                        <span className="text-sm font-medium">0</span>
+                                        <span className="text-sm font-medium">{post.comments_count}</span>
                                     </button>
                                     <button className="flex items-center gap-1 text-slate-600 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors ml-auto">
                                         <Share2 className="w-5 h-5" />
@@ -565,6 +664,75 @@ export default function Community() {
                                     ))}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Comments Tray */}
+            {showComments && selectedPostForComments && (
+                <div className="fixed inset-0 z-[60] flex justify-end animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowComments(false)} />
+                    <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 h-full shadow-2xl animate-in slide-in-from-right duration-500 flex flex-col">
+                        <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800">
+                            <h3 className="font-bold text-lg flex items-center gap-2">
+                                <MessageCircle className="w-5 h-5 text-purple-600" />
+                                Comentarios
+                            </h3>
+                            <button 
+                                onClick={() => setShowComments(false)}
+                                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                            {loadingComments ? (
+                                <div className="flex justify-center py-10">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                                </div>
+                            ) : comments.length === 0 ? (
+                                <div className="text-center py-10">
+                                    <p className="text-slate-500">Aún no hay comentarios. ¡Inicia la conversación!</p>
+                                </div>
+                            ) : (
+                                comments.map((comment) => (
+                                    <div key={comment.id} className="flex gap-3">
+                                        <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 font-bold shrink-0 text-xs">
+                                            {comment.profiles?.name?.charAt(0) || 'U'}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-2xl rounded-tl-none">
+                                                <h5 className="text-xs font-bold mb-1">{comment.profiles?.name}</h5>
+                                                <p className="text-sm text-slate-700 dark:text-slate-300">{comment.content}</p>
+                                            </div>
+                                            <span className="text-[10px] text-slate-500 ml-1">
+                                                {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: es })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 pb-8">
+                            <form onSubmit={handleAddComment} className="flex gap-2">
+                                <input 
+                                    type="text"
+                                    value={newComment}
+                                    onChange={(e) => setNewComment(e.target.value)}
+                                    placeholder="Escribe un comentario..."
+                                    className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-full px-4 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                                />
+                                <button 
+                                    type="submit"
+                                    disabled={!newComment.trim()}
+                                    className="w-10 h-10 bg-purple-600 text-white rounded-full flex items-center justify-center hover:bg-purple-500 disabled:opacity-50 transition-colors shrink-0"
+                                >
+                                    <Send className="w-4 h-4" />
+                                </button>
+                            </form>
                         </div>
                     </div>
                 </div>
